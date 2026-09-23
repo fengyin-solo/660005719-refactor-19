@@ -6,15 +6,18 @@
 <script setup lang="ts">
 import { ref, watch, computed, onMounted } from 'vue'
 import { useImagingStore } from '../store/imaging'
+import { planeMaxSlice, type Dimensions } from '../lib/volumeLayout'
 const props = defineProps<{ plane: string }>()
 const store = useImagingStore()
 const cvs = ref<HTMLCanvasElement>()
 const slice = ref(32)
 
-const maxSlice = computed(() => {
-  const dims = store.volumeData?.dimensions || [64, 64, 64]
-  return props.plane === 'axial' ? dims[0]-1 : props.plane === 'coronal' ? dims[1]-1 : dims[2]-1
-})
+const FALLBACK_DIMS: Dimensions = [64, 64, 64]
+
+// slider 上限 = 该切面固定轴长度 - 1（口径来自 MPR_PLANES 注册表）
+const maxSlice = computed(() =>
+  planeMaxSlice(store.volumeData?.dimensions ?? FALLBACK_DIMS, props.plane)
+)
 
 function draw() {
   const c = cvs.value!; const ctx = c.getContext('2d')!; const W = c.width, H = c.height
@@ -23,10 +26,8 @@ function draw() {
   const vd = store.volumeData
   if (!vd) return
 
-  let sliceData: number[][] | null = null
-  if (props.plane === 'axial') sliceData = vd.mpr.axial
-  else if (props.plane === 'coronal') sliceData = vd.mpr.coronal
-  else sliceData = vd.mpr.sagittal
+  // 后端按 MPR_PLANES 注册表同名输出中切片，此处按 plane 名直接取用
+  let sliceData: number[][] | null = (vd.mpr as Record<string, number[][]>)[props.plane] ?? null
 
   if (!sliceData || !sliceData.length) return
 

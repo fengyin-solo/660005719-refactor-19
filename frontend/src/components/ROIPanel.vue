@@ -6,9 +6,9 @@
       <div class="roi-row">
         <span>ROI #{{ i+1 }}</span>
         <el-input v-model="roi.label" size="small" placeholder="标签" style="width:80px"/>
-        <el-input-number v-model="roi.center[0]" size="small" :min="0" :max="63" style="width:65px" controls-position="right"/>
-        <el-input-number v-model="roi.center[1]" size="small" :min="0" :max="63" style="width:65px" controls-position="right"/>
-        <el-input-number v-model="roi.center[2]" size="small" :min="0" :max="63" style="width:65px" controls-position="right"/>
+        <el-input-number v-model="roi.center[0]" size="small" :min="0" :max="axisMax(0)" style="width:65px" controls-position="right"/>
+        <el-input-number v-model="roi.center[1]" size="small" :min="0" :max="axisMax(1)" style="width:65px" controls-position="right"/>
+        <el-input-number v-model="roi.center[2]" size="small" :min="0" :max="axisMax(2)" style="width:65px" controls-position="right"/>
         <el-input-number v-model="roi.radius" size="small" :min="2" :max="20" style="width:60px" controls-position="right"/>
         <el-button size="small" type="danger" @click="removeROI(i)" circle>×</el-button>
       </div>
@@ -33,12 +33,18 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useImagingStore } from '../store/imaging'
+import { roiAxisAt } from '../lib/volumeLayout'
 const store = useImagingStore()
 
 interface ROIDef { label: string; center: number[]; radius: number }
 const rois = ref<ROIDef[]>([
   { label: 'lesion1', center: [30, 28, 32], radius: 6 }
 ])
+
+// ROI 中心输入框 i 的轴 (x/y/z) 与最大下标，口径统一来自 volumeLayout
+function axisMax(i: number) {
+  return roiAxisAt(store.volumeData?.dimensions ?? null, i).max
+}
 
 function addROI() { rois.value.push({ label: `roi-${rois.value.length+1}`, center: [32, 32, 32], radius: 8 }) }
 function removeROI(i: number) { rois.value.splice(i, 1) }

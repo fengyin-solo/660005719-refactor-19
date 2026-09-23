@@ -7,6 +7,8 @@ import { ref, watch, onMounted, onUnmounted } from 'vue'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { useImagingStore } from '../store/imaging'
+import { axisSizes, getVoxel, AXIS_X, AXIS_Y, AXIS_Z } from '../lib/volumeLayout'
+import type { Coord } from '../lib/volumeLayout'
 const store = useImagingStore()
 const container = ref<HTMLDivElement>()
 let scene: THREE.Scene, camera: THREE.PerspectiveCamera, renderer: THREE.WebGLRenderer, controls: OrbitControls, animId: number
@@ -28,7 +30,9 @@ function renderVolume() {
   const vd = store.volumeData
   if (!vd) return
   const vol = vd.volume
-  const [d, h, w] = vd.dimensions
+  // 轴长按统一轴序规则解析：dimensions = [depth, height, width]
+  const sizes = axisSizes(vd.dimensions)
+  const d = sizes[AXIS_Z], h = sizes[AXIS_Y], w = sizes[AXIS_X]
   const step = 2
 
   const wl = store.windowVal, ww = store.levelVal
@@ -41,7 +45,7 @@ function renderVolume() {
   for (let z = 0; z < d; z += step) {
     for (let y = 0; y < h; y += step) {
       for (let x = 0; x < w; x += step) {
-        let val = vol[z][y][x]
+        let val = getVoxel(vol, { [AXIS_Z]: z, [AXIS_Y]: y, [AXIS_X]: x } as Coord)
         let t = (val - lower) / (upper - lower)
         t = Math.max(0, Math.min(1, t))
 

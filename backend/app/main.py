@@ -4,6 +4,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from . import volume_layout as vl
+
 app = FastAPI(title="Medical Imaging Viewer")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
@@ -37,14 +39,20 @@ WINDOW_PRESETS = {
 
 
 def generate_volume(preset: str, w: int, h: int, d: int):
-    """Generate synthetic CT-like volume"""
+    """Generate synthetic CT-like volume.
+
+    轴序口径来自 volume_layout：体数组形状 = (depth, height, width)，
+    体素统一经 zi = vl.voxel_index(x, y, z) 写入，不再散落 [z, y, x] 下标。
+    """
     np.random.seed(42)
-    vol = np.zeros((d, h, w), dtype=np.float32)
+    vol = np.zeros(vl.make_shape(width=w, height=h, depth=d), dtype=np.float32)
 
     center_x, center_y, center_z = w//2, h//2, d//2
     for z in range(d):
         for y in range(h):
             for x in range(w):
+                # volume[z][y][x] —— 全文件唯一的体素下标口径
+                zi = vl.voxel_index(x, y, z)
                 # Head-like shape
                 rx = (x - center_x - 5) / (w * 0.4)
                 ry = (y - center_y) / (h * 0.45)
@@ -64,9 +72,9 @@ def generate_volume(preset: str, w: int, h: int, d: int):
                         # Skull
                         if dist > 0.7 and dist < 0.85:
                             base = 200 + random.uniform(-20, 20)
-                        vol[z, y, x] = base + noise
+                        vol[zi] = base + noise
                     elif dist < 0.9:
-                        vol[z, y, x] = 100  # Scalp
+                        vol[zi] = 100  # Scalp
                 elif preset == "chest":
                     # Body oval
                     bx = (x - center_x) / (w * 0.35)
@@ -77,13 +85,13 @@ def generate_volume(preset: str, w: int, h: int, d: int):
                         lung_dist1 = math.sqrt(((x-center_x+8)/(w*0.12))**2 + ((y-center_y)/(h*0.13))**2)
                         lung_dist2 = math.sqrt(((x-center_x-8)/(w*0.12))**2 + ((y-center_y)/(h*0.13))**2)
                         if lung_dist1 < 0.7 or lung_dist2 < 0.7:
-                            vol[z, y, x] = -650 + np.sin(z*0.3)*30
+                            vol[zi] = -650 + np.sin(z*0.3)*30
                         else:
-                            vol[z, y, x] = 30 + np.random.uniform(-5, 5)
+                            vol[zi] = 30 + np.random.uniform(-5, 5)
                         # Spine
                         if abs(x - center_x) < 3 and abs(y - center_y + 8) < 4:
-                            vol[z, y, x] = 250
-                    vol[z, y, x] += np.random.uniform(-3, 3)
+                            vol[zi] = 250
+                    vol[zi] += np.random.uniform(-3, 3)
                 elif preset == "abdomen":
                     bx = (x - center_x) / (w * 0.33)
                     by = (y - center_y) / (h * 0.4)
@@ -102,7 +110,7 @@ def generate_volume(preset: str, w: int, h: int, d: int):
                         # Spine
                         if abs(x - center_x) < 3 and abs(y - center_y + 7) < 4:
                             base = 250 + np.random.uniform(-10, 10)
-                        vol[z, y, x] = base + np.random.uniform(-9, 9)
+                        vol[zi] = base + np.random.uniform(-9, 9)
 
     return vol.tolist()
 
@@ -111,20 +119,14 @@ def generate_volume(preset: str, w: int, h: int, d: int):
 def get_volume(req: VolumeRequest):
     vol = generate_volume(req.preset, req.width, req.height, req.depth)
 
-    # Extract mid slices for MPR
-    mid_axial = int(req.depth // 2)
-    mid_coronal = int(req.height // 2)
-    mid_sagittal = int(req.width // 2)
+    # MPR 中切片：切面行列口径全部由 volume_layout.MPR_PLANES 注册表给出
+    mpr = vl.extract_mpr_slices(vol, req.width, req.height, req.depth)
 
     # Return: 3D volume + 3 MPR slices
     return {
         "volume": vol,
-        "dimensions": [req.depth, req.height, req.width],
-        "mpr": {
-            "axial": vol[mid_axial],
-            "coronal": [[vol[z][mid_coronal][x] for x in range(req.width)] for z in range(req.depth)],
-            "sagittal": [[vol[z][y][mid_sagittal] for y in range(req.height)] for z in range(req.depth)]
-        },
+        "dimensions": vl.dims_dhw(req.width, req.height, req.depth),
+        "mpr": mpr,
         "preset": req.preset,
         "windowPresets": WINDOW_PRESETS
     }
@@ -146,13 +148,20 @@ def analyze_roi(req: ROIAnalyzeRequest):
         # Extract voxels within sphere
         voxels = []
         try:
-            vol = np.array(req.volume)
-            d, h, w = vol.shape
-            for z in range(max(0, center[2]-radius), min(d, center[2]+radius+1)):
-                for y in range(max(0, center[1]-radius), min(h, center[1]+radius+1)):
-                    for x in range(max(0, center[0]-radius), min(w, center[0]+radius+1)):
-                        if math.sqrt((x-center[0])**2 + (y-center[1])**2 + (z-center[2])**2) <= radius:
-                            voxels.append(float(vol[z, y, x]))
+            arr3d = np.array(req.volume)
+            # 形状按 volume_layout 的 (depth, height, width) 轴序解析
+            sizes = dict(zip(vl.AXES_DHW, arr3d.shape))
+            c = vl.roi_center_xyz(center)  # center 列表 [x, y, z]
+            spans = {
+                axis: range(max(0, c[axis] - radius),
+                            min(sizes[axis], c[axis] + radius + 1))
+                for axis in vl.AXES_DHW
+            }
+            for z in spans[vl.AXIS_Z]:
+                for y in spans[vl.AXIS_Y]:
+                    for x in spans[vl.AXIS_X]:
+                        if math.sqrt((x-c[vl.AXIS_X])**2 + (y-c[vl.AXIS_Y])**2 + (z-c[vl.AXIS_Z])**2) <= radius:
+                            voxels.append(float(arr3d[vl.voxel_index(x, y, z)]))
         except:
             voxels = []
 
