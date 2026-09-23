@@ -7,6 +7,12 @@ import { ref, watch, onMounted, onUnmounted } from 'vue'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { useImagingStore } from '../store/imaging'
+import {
+  axisSize,
+  voxelAt,
+  type AxisKey,
+} from '../volumeGeometry'
+
 const store = useImagingStore()
 const container = ref<HTMLDivElement>()
 let scene: THREE.Scene, camera: THREE.PerspectiveCamera, renderer: THREE.WebGLRenderer, controls: OrbitControls, animId: number
@@ -27,8 +33,12 @@ function renderVolume() {
   volGroup.clear()
   const vd = store.volumeData
   if (!vd) return
-  const vol = vd.volume
-  const [d, h, w] = vd.dimensions
+
+  const coordinateSystem = vd.coordinateSystem
+  const sizes = coordinateSystem.axes.reduce((acc, axis) => {
+    acc[axis.key] = axisSize(vd.dimensions, coordinateSystem, axis.key)
+    return acc
+  }, {} as Record<AxisKey, number>)
   const step = 2
 
   const wl = store.windowVal, ww = store.levelVal
@@ -36,17 +46,28 @@ function renderVolume() {
 
   // Sample volume as point cloud with transfer function
   const positions: number[] = [], colors: number[] = []
-  const scaleX = 3/w, scaleY = 3/h, scaleZ = 3/d
+  const scaleByAxis = {
+    x: 3 / sizes.x,
+    y: 3 / sizes.y,
+    z: 3 / sizes.z,
+  }
 
-  for (let z = 0; z < d; z += step) {
-    for (let y = 0; y < h; y += step) {
-      for (let x = 0; x < w; x += step) {
-        let val = vol[z][y][x]
+  for (let z = 0; z < sizes.z; z += step) {
+    for (let y = 0; y < sizes.y; y += step) {
+      for (let x = 0; x < sizes.x; x += step) {
+        const position = { x, y, z }
+        const val = voxelAt(vd.volume, vd.dimensions, coordinateSystem, position)
+        if (val === undefined) continue
+
         let t = (val - lower) / (upper - lower)
         t = Math.max(0, Math.min(1, t))
 
         if (t > 0.05) {
-          positions.push((x - w/2) * scaleX, (y - h/2) * scaleY, (z - d/2) * scaleZ)
+          positions.push(
+            (position.x - sizes.x / 2) * scaleByAxis.x,
+            (position.y - sizes.y / 2) * scaleByAxis.y,
+            (position.z - sizes.z / 2) * scaleByAxis.z
+          )
           // Bone (white), tissue (gray), air (transparent)
           const alpha = t * 0.6
           colors.push(0.8 + t*0.2, 0.7 + t*0.2, 0.6 + t*0.3)

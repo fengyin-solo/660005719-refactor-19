@@ -6,9 +6,16 @@
       <div class="roi-row">
         <span>ROI #{{ i+1 }}</span>
         <el-input v-model="roi.label" size="small" placeholder="标签" style="width:80px"/>
-        <el-input-number v-model="roi.center[0]" size="small" :min="0" :max="63" style="width:65px" controls-position="right"/>
-        <el-input-number v-model="roi.center[1]" size="small" :min="0" :max="63" style="width:65px" controls-position="right"/>
-        <el-input-number v-model="roi.center[2]" size="small" :min="0" :max="63" style="width:65px" controls-position="right"/>
+        <el-input-number
+          v-for="(axis, axisIndex) in centerAxes"
+          :key="axis.key"
+          v-model="roi.center[axisIndex]"
+          size="small"
+          :min="0"
+          :max="axisMax(axis.key)"
+          style="width:65px"
+          controls-position="right"
+        />
         <el-input-number v-model="roi.radius" size="small" :min="2" :max="20" style="width:60px" controls-position="right"/>
         <el-button size="small" type="danger" @click="removeROI(i)" circle>×</el-button>
       </div>
@@ -31,16 +38,38 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useImagingStore } from '../store/imaging'
+import { axisSize, type AxisDefinition, type AxisKey } from '../volumeGeometry'
 const store = useImagingStore()
+
+const centerAxes = computed<AxisDefinition[]>(() => {
+  const coordinateSystem = store.volumeData?.coordinateSystem
+  if (!coordinateSystem) return []
+  return coordinateSystem.centerOrder.map(
+    key => coordinateSystem.axes.find(axis => axis.key === key)!
+  )
+})
+
+function axisMax(axis: AxisKey) {
+  const vd = store.volumeData
+  if (!vd) return 63
+  return axisSize(vd.dimensions, vd.coordinateSystem, axis) - 1
+}
 
 interface ROIDef { label: string; center: number[]; radius: number }
 const rois = ref<ROIDef[]>([
   { label: 'lesion1', center: [30, 28, 32], radius: 6 }
 ])
 
-function addROI() { rois.value.push({ label: `roi-${rois.value.length+1}`, center: [32, 32, 32], radius: 8 }) }
+function addROI() {
+  const vd = store.volumeData
+  const coordinateSystem = vd?.coordinateSystem
+  const center = vd && coordinateSystem
+    ? coordinateSystem.centerOrder.map(axis => Math.floor(axisSize(vd.dimensions, coordinateSystem, axis) / 2))
+    : [32, 32, 32]
+  rois.value.push({ label: `roi-${rois.value.length+1}`, center, radius: 8 })
+}
 function removeROI(i: number) { rois.value.splice(i, 1) }
 function analyze() { store.analyzeROI(rois.value.map(r => ({...r}))) }
 </script>

@@ -6,15 +6,30 @@
 <script setup lang="ts">
 import { ref, watch, computed, onMounted } from 'vue'
 import { useImagingStore } from '../store/imaging'
-const props = defineProps<{ plane: string }>()
+import {
+  axisSize,
+  type PlaneDefinition,
+} from '../volumeGeometry'
+
+const props = defineProps<{ plane: PlaneDefinition }>()
 const store = useImagingStore()
 const cvs = ref<HTMLCanvasElement>()
-const slice = ref(32)
+const slice = ref(0)
 
 const maxSlice = computed(() => {
-  const dims = store.volumeData?.dimensions || [64, 64, 64]
-  return props.plane === 'axial' ? dims[0]-1 : props.plane === 'coronal' ? dims[1]-1 : dims[2]-1
+  const vd = store.volumeData
+  if (!vd) return 0
+  return axisSize(vd.dimensions, vd.coordinateSystem, props.plane.fixedAxis) - 1
 })
+
+watch(
+  () => store.volumeData,
+  () => {
+    slice.value = Math.floor((maxSlice.value + 1) / 2)
+    draw()
+  },
+  { deep: true }
+)
 
 function draw() {
   const c = cvs.value!; const ctx = c.getContext('2d')!; const W = c.width, H = c.height
@@ -23,11 +38,7 @@ function draw() {
   const vd = store.volumeData
   if (!vd) return
 
-  let sliceData: number[][] | null = null
-  if (props.plane === 'axial') sliceData = vd.mpr.axial
-  else if (props.plane === 'coronal') sliceData = vd.mpr.coronal
-  else sliceData = vd.mpr.sagittal
-
+  const sliceData = vd.mpr[props.plane.name]
   if (!sliceData || !sliceData.length) return
 
   const wl = store.windowVal, ww = store.levelVal
@@ -48,9 +59,11 @@ function draw() {
   }
 }
 
-watch(() => store.volumeData, draw, { deep: true })
 watch(() => [store.windowVal, store.levelVal], draw)
-onMounted(draw)
+onMounted(() => {
+  slice.value = Math.floor((maxSlice.value + 1) / 2)
+  draw()
+})
 </script>
 
 <style scoped>

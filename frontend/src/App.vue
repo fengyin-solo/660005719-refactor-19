@@ -14,9 +14,9 @@
       <div class="render-area"><VolumeRenderer /></div>
       <div class="mpr-area">
         <div class="mpr-row">
-          <div class="mpr-panel"><div class="mpr-title">横断面 (轴位)</div><MPRView plane="axial" /></div>
-          <div class="mpr-panel"><div class="mpr-title">冠状面</div><MPRView plane="coronal" /></div>
-          <div class="mpr-panel"><div class="mpr-title">矢状面</div><MPRView plane="sagittal" /></div>
+          <div v-for="plane in planeDefinitions" :key="plane.name" class="mpr-panel">
+            <div class="mpr-title">{{ plane.title }}</div><MPRView :plane="plane" />
+          </div>
         </div>
         <WindowControl />
         <ROIPanel />
@@ -29,12 +29,14 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import VolumeRenderer from './components/VolumeRenderer.vue'
 import MPRView from './components/MPRView.vue'
 import WindowControl from './components/WindowControl.vue'
 import ROIPanel from './components/ROIPanel.vue'
 import { useImagingStore } from './store/imaging'
 const store = useImagingStore()
+const planeDefinitions = computed(() => store.volumeData?.coordinateSystem.planes ?? [])
 </script>
 
 <style>

@@ -4,6 +4,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from .volume_geometry import (
+    coordinate_system,
+    iter_sphere_voxels,
+    mpr_slices,
+    volume_shape,
+)
+
 app = FastAPI(title="Medical Imaging Viewer")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
@@ -39,6 +46,7 @@ WINDOW_PRESETS = {
 def generate_volume(preset: str, w: int, h: int, d: int):
     """Generate synthetic CT-like volume"""
     np.random.seed(42)
+    d, h, w = volume_shape(width=w, height=h, depth=d)
     vol = np.zeros((d, h, w), dtype=np.float32)
 
     center_x, center_y, center_z = w//2, h//2, d//2
@@ -109,22 +117,14 @@ def generate_volume(preset: str, w: int, h: int, d: int):
 
 @app.post("/api/volume")
 def get_volume(req: VolumeRequest):
-    vol = generate_volume(req.preset, req.width, req.height, req.depth)
+    raw_volume = generate_volume(req.preset, req.width, req.height, req.depth)
+    volume = np.asarray(raw_volume, dtype=np.float32)
 
-    # Extract mid slices for MPR
-    mid_axial = int(req.depth // 2)
-    mid_coronal = int(req.height // 2)
-    mid_sagittal = int(req.width // 2)
-
-    # Return: 3D volume + 3 MPR slices
     return {
-        "volume": vol,
-        "dimensions": [req.depth, req.height, req.width],
-        "mpr": {
-            "axial": vol[mid_axial],
-            "coronal": [[vol[z][mid_coronal][x] for x in range(req.width)] for z in range(req.depth)],
-            "sagittal": [[vol[z][y][mid_sagittal] for y in range(req.height)] for z in range(req.depth)]
-        },
+        "volume": raw_volume,
+        "dimensions": list(volume.shape),
+        "mpr": mpr_slices(volume),
+        "coordinateSystem": coordinate_system(),
         "preset": req.preset,
         "windowPresets": WINDOW_PRESETS
     }
@@ -147,12 +147,7 @@ def analyze_roi(req: ROIAnalyzeRequest):
         voxels = []
         try:
             vol = np.array(req.volume)
-            d, h, w = vol.shape
-            for z in range(max(0, center[2]-radius), min(d, center[2]+radius+1)):
-                for y in range(max(0, center[1]-radius), min(h, center[1]+radius+1)):
-                    for x in range(max(0, center[0]-radius), min(w, center[0]+radius+1)):
-                        if math.sqrt((x-center[0])**2 + (y-center[1])**2 + (z-center[2])**2) <= radius:
-                            voxels.append(float(vol[z, y, x]))
+            voxels = list(iter_sphere_voxels(vol, center, radius))
         except:
             voxels = []
 
